@@ -12,6 +12,9 @@ import math
 import argparse
 import shutil
 import os
+import termios
+import tty
+import select
 
 # ============================================================================
 # CONFIGURATION - Customize these values
@@ -38,6 +41,18 @@ UPDATE_INTERVAL = 0.1              # Screen update interval in seconds
 # ============================================================================
 # END CONFIGURATION
 # ============================================================================
+
+
+def get_key_press():
+    """
+    Check if a key has been pressed (non-blocking)
+
+    Returns:
+        str or None: The key pressed, or None if no key was pressed
+    """
+    if select.select([sys.stdin], [], [], 0)[0]:
+        return sys.stdin.read(1)
+    return None
 
 
 def parse_time(time_str):
@@ -156,15 +171,16 @@ def draw_circle_line(y, radius, left_padding, remaining_angle, edge_thickness):
     return line
 
 
-def draw_timer(percent, remaining_time="", total_time=""):
+def draw_timer(percent, remaining_time="", total_time="", paused=False):
     """
     Draw the circular timer with optional text
-    
+
     Args:
         percent: Percentage of time remaining (0.0 to 1.0)
         remaining_time: Formatted remaining time string
         total_time: Formatted total time string
-        
+        paused: Whether the timer is currently paused
+
     Returns:
         tuple: (center_position, use_side_layout)
     """
@@ -189,10 +205,13 @@ def draw_timer(percent, remaining_time="", total_time=""):
     if use_side_layout and remaining_time:
         middle_line = len(circle_lines) // 2
         spacing = " " * TEXT_SPACING
-        
+
         if middle_line - 1 < len(circle_lines):
-            circle_lines[middle_line - 1] += spacing + f"{TIMER_COLOR}{remaining_time}{RESET_COLOR}"
-        
+            time_text = f"{TIMER_COLOR}{remaining_time}{RESET_COLOR}"
+            if paused:
+                time_text += " [PAUSED]"
+            circle_lines[middle_line - 1] += spacing + time_text
+
         if middle_line < len(circle_lines):
             total_text = f"Total: {total_time}"
             circle_lines[middle_line] += spacing + total_text
@@ -208,61 +227,92 @@ def draw_timer(percent, remaining_time="", total_time=""):
 def countdown(total_seconds):
     """
     Run the countdown timer
-    
+
     Args:
         total_seconds: Total duration in seconds
     """
     # Hide cursor
     print("\033[?25l", end="", flush=True)
-    
+
+    # Set up terminal for non-blocking input
+    old_settings = termios.tcgetattr(sys.stdin)
+
     try:
+        tty.setcbreak(sys.stdin.fileno())
+
+        paused = False
+        pause_time = 0
+        total_pause_duration = 0
         start_time = time.time()
         end_time = start_time + total_seconds
-        
+
         while True:
+            # Check for space bar press
+            key = get_key_press()
+            if key == ' ':
+                paused = not paused
+                if paused:
+                    pause_time = time.time()
+                else:
+                    # Resume: adjust end time by pause duration
+                    total_pause_duration += time.time() - pause_time
+                    end_time += time.time() - pause_time
+
             current_time = time.time()
-            remaining = max(0, end_time - current_time)
-            
+
+            # Calculate remaining time (frozen if paused)
+            if paused:
+                remaining = max(0, end_time - pause_time)
+            else:
+                remaining = max(0, end_time - current_time)
+
             # Check if timer finished
-            if remaining <= 0:
+            if remaining <= 0 and not paused:
                 center_pos, use_side_layout = draw_timer(0.0, "⏰ TIME'S UP! ⏰", "")
-                
+
                 if not use_side_layout:
                     print("\n")
                     time_up_text = "⏰ TIME'S UP! ⏰"
                     print(" " * (center_pos - len(time_up_text) // 2) + time_up_text)
-                
+
                 print("\a", flush=True)
                 break
-            
+
             # Calculate percentage and format time
             percent = remaining / total_seconds
             remaining_formatted = format_time(int(remaining))
             total_formatted = format_time(total_seconds)
-            
+
             # Draw timer
-            center_pos, use_side_layout = draw_timer(percent, remaining_formatted, total_formatted)
-            
+            center_pos, use_side_layout = draw_timer(percent, remaining_formatted, total_formatted, paused)
+
             # Display text below circle for normal layout
             if not use_side_layout:
                 print("\n")
-                
+
                 # Remaining time (centered)
                 remaining_text = f"{TIMER_COLOR}{remaining_formatted}{RESET_COLOR}"
-                actual_length = len(remaining_formatted)
+                if paused:
+                    remaining_text += " [PAUSED]"
+                actual_length = len(remaining_formatted) + (9 if paused else 0)
                 print(" " * (center_pos - actual_length // 2) + remaining_text)
-                
+
                 # Total time (centered)
                 total_text = f"Total: {total_formatted}"
-                print(" " * (center_pos - len(total_text) // 2) + total_text, flush=True)
-            
+                print(" " * (center_pos - len(total_text) // 2) + total_text)
+
+                # Instructions (centered)
+                instructions = "Press SPACE to pause/resume"
+                print(" " * (center_pos - len(instructions) // 2) + instructions, flush=True)
+
             time.sleep(UPDATE_INTERVAL)
-            
+
     except KeyboardInterrupt:
         print("\n\nTimer cancelled!", flush=True)
         sys.exit(0)
     finally:
-        # Show cursor again
+        # Restore terminal settings and show cursor
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
         print("\033[?25h", end="", flush=True)
 
 
