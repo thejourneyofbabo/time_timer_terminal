@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""
+Circular countdown timer for terminal (Time Timer style)
+Usage: timetimer 15m
+       timetimer 30s
+       timetimer 1h30m
+"""
+
+import sys
+import time
+import math
+import argparse
+import shutil
+import os
+
+# ============================================================================
+# CONFIGURATION - Customize these values
+# ============================================================================
+
+# Timer appearance
+TIMER_COLOR = "\033[91m"           # Red color for timer
+RESET_COLOR = "\033[0m"            # Reset to default color
+GRAY_COLOR = "\033[90m"            # Gray color (currently unused)
+
+# Circle size constraints
+MIN_RADIUS = 3                     # Minimum circle radius
+MAX_RADIUS = 15                    # Maximum circle radius
+EDGE_THICKNESS_RATIO = 0.05        # Edge thickness as ratio of radius
+
+# Layout settings
+VERTICAL_SPACE_BUFFER = 6          # Extra vertical space needed for text
+TEXT_SPACING = 5                   # Space between circle and text (side layout)
+SIDE_LAYOUT_LEFT_PADDING = 5       # Left padding for side layout
+
+# Update frequency
+UPDATE_INTERVAL = 0.1              # Screen update interval in seconds
+
+# ============================================================================
+# END CONFIGURATION
+# ============================================================================
+
+
+def parse_time(time_str):
+    """
+    Parse time string to seconds
+    
+    Supported formats:
+    - '15m' -> 15 minutes
+    - '30s' -> 30 seconds
+    - '1h' -> 1 hour
+    - '1h30m' -> 1 hour 30 minutes
+    """
+    time_str = time_str.lower().strip()
+    
+    # Handle combined format like '1h30m'
+    if 'h' in time_str and 'm' in time_str:
+        parts = time_str.split('h')
+        hours = int(parts[0])
+        minutes = int(parts[1].replace('m', ''))
+        return hours * 3600 + minutes * 60
+    
+    if time_str.endswith('s'):
+        return int(time_str[:-1])
+    elif time_str.endswith('m'):
+        return int(time_str[:-1]) * 60
+    elif time_str.endswith('h'):
+        return int(time_str[:-1]) * 3600
+    else:
+        # Default to minutes if no unit specified
+        return int(time_str) * 60
+
+
+def format_time(seconds):
+    """Format seconds to MM:SS or HH:MM:SS"""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes:02d}:{secs:02d}"
+
+
+def calculate_layout(terminal_width, terminal_height):
+    """
+    Calculate optimal layout based on terminal size
+    
+    Returns:
+        tuple: (radius, use_side_layout, left_padding)
+    """
+    # Calculate maximum possible radius
+    max_radius_width = terminal_width // 4
+    max_radius_height = (terminal_height - VERTICAL_SPACE_BUFFER) // 2
+    max_radius = min(max_radius_width, max_radius_height)
+    
+    # Apply constraints
+    radius = max(MIN_RADIUS, min(max_radius, MAX_RADIUS))
+    
+    # Determine if we need side layout
+    vertical_space_needed = radius * 2 + VERTICAL_SPACE_BUFFER
+    use_side_layout = terminal_height < vertical_space_needed
+    
+    # Calculate left padding
+    if use_side_layout:
+        left_padding = SIDE_LAYOUT_LEFT_PADDING
+    else:
+        circle_width = radius * 4
+        left_padding = (terminal_width - circle_width) // 2
+    
+    return radius, use_side_layout, left_padding
+
+
+def draw_circle_line(y, radius, left_padding, remaining_angle, edge_thickness):
+    """
+    Draw a single horizontal line of the circle
+    
+    Args:
+        y: Vertical position relative to center
+        radius: Circle radius
+        left_padding: Left padding for centering
+        remaining_angle: Angle of remaining time (0-360)
+        edge_thickness: Thickness of circle edge
+        
+    Returns:
+        str: Line to be printed
+    """
+    line = " " * left_padding
+    
+    for x in range(-radius * 2, radius * 2 + 1):
+        # Calculate distance from center (adjust for terminal aspect ratio)
+        distance = math.sqrt((x / 2) ** 2 + y ** 2)
+        
+        if distance <= radius and distance >= radius - edge_thickness:
+            # On the circle edge
+            angle = math.degrees(math.atan2(-y, x / 2))
+            normalized_angle = (90 - angle) % 360
+            
+            if normalized_angle <= remaining_angle:
+                line += f"{TIMER_COLOR}█{RESET_COLOR}"
+            else:
+                line += " "
+                
+        elif distance < radius - edge_thickness:
+            # Inside the circle
+            angle = math.degrees(math.atan2(-y, x / 2))
+            normalized_angle = (90 - angle) % 360
+            
+            if normalized_angle <= remaining_angle:
+                line += f"{TIMER_COLOR}█{RESET_COLOR}"
+            else:
+                line += " "
+        else:
+            line += " "
+    
+    return line
+
+
+def draw_timer(percent, remaining_time="", total_time=""):
+    """
+    Draw the circular timer with optional text
+    
+    Args:
+        percent: Percentage of time remaining (0.0 to 1.0)
+        remaining_time: Formatted remaining time string
+        total_time: Formatted total time string
+        
+    Returns:
+        tuple: (center_position, use_side_layout)
+    """
+    # Clear screen
+    os.system('clear' if os.name == 'posix' else 'cls')
+    
+    # Get terminal size and calculate layout
+    terminal_width, terminal_height = shutil.get_terminal_size()
+    radius, use_side_layout, left_padding = calculate_layout(terminal_width, terminal_height)
+    
+    # Calculate remaining angle
+    remaining_angle = 360 * percent
+    edge_thickness = max(0.5, radius * EDGE_THICKNESS_RATIO)
+    
+    # Draw circle
+    circle_lines = []
+    for y in range(-radius, radius + 1):
+        line = draw_circle_line(y, radius, left_padding, remaining_angle, edge_thickness)
+        circle_lines.append(line)
+    
+    # Add text for side layout
+    if use_side_layout and remaining_time:
+        middle_line = len(circle_lines) // 2
+        spacing = " " * TEXT_SPACING
+        
+        if middle_line - 1 < len(circle_lines):
+            circle_lines[middle_line - 1] += spacing + f"{TIMER_COLOR}{remaining_time}{RESET_COLOR}"
+        
+        if middle_line < len(circle_lines):
+            total_text = f"Total: {total_time}"
+            circle_lines[middle_line] += spacing + total_text
+    
+    # Print all lines
+    for line in circle_lines:
+        print(line)
+    
+    center_position = left_padding + radius * 2
+    return center_position, use_side_layout
+
+
+def countdown(total_seconds):
+    """
+    Run the countdown timer
+    
+    Args:
+        total_seconds: Total duration in seconds
+    """
+    # Hide cursor
+    print("\033[?25l", end="", flush=True)
+    
+    try:
+        start_time = time.time()
+        end_time = start_time + total_seconds
+        
+        while True:
+            current_time = time.time()
+            remaining = max(0, end_time - current_time)
+            
+            # Check if timer finished
+            if remaining <= 0:
+                center_pos, use_side_layout = draw_timer(0.0, "⏰ TIME'S UP! ⏰", "")
+                
+                if not use_side_layout:
+                    print("\n")
+                    time_up_text = "⏰ TIME'S UP! ⏰"
+                    print(" " * (center_pos - len(time_up_text) // 2) + time_up_text)
+                
+                print("\a", flush=True)
+                break
+            
+            # Calculate percentage and format time
+            percent = remaining / total_seconds
+            remaining_formatted = format_time(int(remaining))
+            total_formatted = format_time(total_seconds)
+            
+            # Draw timer
+            center_pos, use_side_layout = draw_timer(percent, remaining_formatted, total_formatted)
+            
+            # Display text below circle for normal layout
+            if not use_side_layout:
+                print("\n")
+                
+                # Remaining time (centered)
+                remaining_text = f"{TIMER_COLOR}{remaining_formatted}{RESET_COLOR}"
+                actual_length = len(remaining_formatted)
+                print(" " * (center_pos - actual_length // 2) + remaining_text)
+                
+                # Total time (centered)
+                total_text = f"Total: {total_formatted}"
+                print(" " * (center_pos - len(total_text) // 2) + total_text, flush=True)
+            
+            time.sleep(UPDATE_INTERVAL)
+            
+    except KeyboardInterrupt:
+        print("\n\nTimer cancelled!", flush=True)
+        sys.exit(0)
+    finally:
+        # Show cursor again
+        print("\033[?25h", end="", flush=True)
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description='Time Timer style countdown for terminal',
+        usage='timetimer <time> (e.g., timetimer 15m, timetimer 1h30m, timetimer 30s)'
+    )
+    parser.add_argument('time', help='Duration (e.g., 15m, 1h30m, 30s)')
+    
+    if len(sys.argv) < 2:
+        parser.print_help()
+        sys.exit(1)
+    
+    args = parser.parse_args()
+    
+    try:
+        total_seconds = parse_time(args.time)
+        print(f"\n⏱  Starting {format_time(total_seconds)} timer...\n")
+        time.sleep(1)
+        countdown(total_seconds)
+    except ValueError:
+        print("Error: Invalid time format. Use formats like '15m', '1h30m', or '30s'")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
