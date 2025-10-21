@@ -23,12 +23,12 @@ RESET_COLOR = "\033[0m"            # Reset to default color
 GRAY_COLOR = "\033[90m"            # Gray color (currently unused)
 
 # Circle size constraints
-MIN_RADIUS = 3                     # Minimum circle radius
+MIN_RADIUS = 5                     # Minimum circle radius
 MAX_RADIUS = 15                    # Maximum circle radius
 EDGE_THICKNESS_RATIO = 0.05        # Edge thickness as ratio of radius
 
 # Layout settings
-VERTICAL_SPACE_BUFFER = 6          # Extra vertical space needed for text
+VERTICAL_SPACE_BUFFER = 10          # Extra vertical space needed for text
 TEXT_SPACING = 5                   # Space between circle and text (side layout)
 SIDE_LAYOUT_LEFT_PADDING = 5       # Left padding for side layout
 
